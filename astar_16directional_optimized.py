@@ -7,47 +7,29 @@ import matplotlib.pyplot as plt
 
 Coord = Tuple[int, int]
 
-
-# ---------- Distance helpers ----------
-
 def euclidean(a: Coord, b: Coord) -> float:
     return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
 
 def manhattan(a: Coord, b: Coord) -> int:
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
-
-# ---------- Dynamic weight coefficient ----------
-
 def dynamic_weight(pos: Coord, anchor: Coord, initial_md: float) -> float:
-    """
-    Dynamic weight w(n) ~ 1 when close to anchor, >1 when far.
-    We base it on the ratio of current Manhattan distance to initial distance.
-    """
     d = manhattan(pos, anchor)
     if initial_md <= 0:
         return 1.0
-    ratio = d / initial_md  # in [0, 1] if within bounding box
-
-    # Smooth, bounded version inspired by the paper's exp + log idea
+    ratio = d / initial_md
     w = 1.0 + math.exp(ratio) * math.log(ratio + 1.0)
     return w
 
-
-# ---------- Line-of-sight collision check ----------
-
 def line_is_clear(grid: List[List[int]], a: Coord, b: Coord) -> bool:
-    """
-    Check that the straight line from a to b does not cross obstacles.
-    We sample along the segment and ensure all visited cells are free.
-    """
     rows = len(grid)
-    cols = len(grid[0]) if rows > 0 else 0
+    cols = len(grid[0])
 
     def in_bounds(r: int, c: int) -> bool:
         return 0 <= r < rows and 0 <= c < cols
 
-    (r0, c0), (r1, c1) = a, b
+    (r0, c0) = a
+    (r1, c1) = b
 
     if not in_bounds(r1, c1) or grid[r1][c1] == 1:
         return False
@@ -57,7 +39,6 @@ def line_is_clear(grid: List[List[int]], a: Coord, b: Coord) -> bool:
     steps = max(abs(dr), abs(dc)) * 2
     if steps == 0:
         return True
-
     for k in range(1, steps):
         t = k / steps
         rr = r0 + dr * t
@@ -71,34 +52,16 @@ def line_is_clear(grid: List[List[int]], a: Coord, b: Coord) -> bool:
 
     return True
 
-
-# ---------- 16-direction neighbors ----------
-
-def neighbors_16dir(node: Coord, grid: List[List[int]]) -> List[Coord]:
-    """
-    16-direction “radius 2 ring” around the node:
-        (-2, 2), (-2, 1), (-2, 0), (-2, -1), (-2, -2),
-        (-1, -2), (0, -2), (1, -2), (2, -2),
-        (2, -1), (2, 0), (2, 1), (2, 2),
-        (1, 2), (0, 2), (-1, 2)
-    """
-    directions_16 = [
-        (-2, 2), (-2, 1), (-2, 0), (-2, -1), (-2, -2),
-        (-1, -2), (0, -2), (1, -2), (2, -2),
-        (2, -1), (2, 0), (2, 1), (2, 2),
-        (1, 2), (0, 2), (-1, 2),
-    ]
-
+def neighbors(node: Coord, grid: List[List[int]]) -> List[Coord]:
+    directions = [(-2, 2), (-2, 1), (-2, 0), (-2, -1), (-2, -2), (-1, -2), (0, -2), (1, -2), (2, -2), (2, -1), (2, 0), (2, 1), (2, 2), (1, 2), (0, 2), (-1, 2)]
     r, c = node
     result: List[Coord] = []
-    for dr, dc in directions_16:
+    for dr, dc in directions:
         nr, nc = r + dr, c + dc
         if line_is_clear(grid, (r, c), (nr, nc)):
             result.append((nr, nc))
     return result
 
-
-# ---------- Path helpers ----------
 
 def reconstruct_path(came_from: Dict[Coord, Coord], current: Coord) -> List[Coord]:
     path = [current]
@@ -109,61 +72,47 @@ def reconstruct_path(came_from: Dict[Coord, Coord], current: Coord) -> List[Coor
     return path
 
 
-def prune_path(path: List[Coord], grid: List[List[int]]) -> List[Coord]:
-    """
-    Redundant waypoint deletion:
-    Try to skip intermediate waypoints as long as line-of-sight is clear.
-    """
+def delete_redundant_waypoints(path: List[Coord], grid: List[List[int]]) -> List[Coord]:
     if not path or len(path) <= 2:
         return path
 
-    pruned = [path[0]]
-    anchor_idx = 0
-    check_idx = 2
+    no_redundant = [path[0]]
+    anchor_index = 0
+    check_index = 2
 
-    while check_idx < len(path):
-        anchor = path[anchor_idx]
-        candidate = path[check_idx]
+    while check_index < len(path):
+        anchor = path[anchor_index]
+        candidate = path[check_index]
         if line_is_clear(grid, anchor, candidate):
-            # we can skip the intermediate point(s); try an even farther point
-            check_idx += 1
+            check_index += 1
         else:
-            # last one before candidate is the last safe waypoint
-            last_safe_idx = check_idx - 1
-            pruned.append(path[last_safe_idx])
-            anchor_idx = last_safe_idx
-            check_idx = anchor_idx + 2
+            last_safe_idx = check_index - 1
+            no_redundant.append(path[last_safe_idx])
+            anchor_index = last_safe_idx
+            check_index = anchor_index + 2
 
-    # always end at the goal
-    if pruned[-1] != path[-1]:
-        pruned.append(path[-1])
+    if no_redundant[-1] != path[-1]:
+        no_redundant.append(path[-1])
 
-    return pruned
+    return no_redundant
 
-
-# ---------- Bidirectional 16-direction A* with dynamic weighting ----------
-
-def bidirectional_astar_16dir(
-    grid: List[List[int]],
-    start: Coord,
-    goal: Coord,
-) -> Optional[List[Coord]]:
+def astar_16dir_optimized(grid: List[List[int]], start: Coord, goal: Coord) -> Optional[List[Coord]]:
     rows = len(grid)
-    cols = len(grid[0]) if rows > 0 else 0
+    cols = len(grid[0])
 
     def in_bounds(r: int, c: int) -> bool:
         return 0 <= r < rows and 0 <= c < cols
 
     if not in_bounds(*start) or not in_bounds(*goal):
-        print("Start or goal out of bounds.")
+        print("start or goal is out of bounds")
         return None
     if grid[start[0]][start[1]] == 1 or grid[goal[0]][goal[1]] == 1:
-        print("Start or goal is blocked.")
+        print("start or goal is blocked")
         return None
 
     initial_md = max(manhattan(start, goal), 1)
 
-    # Forward search (start -> goal)
+    # forward search
     open_f: List[Tuple[float, Coord]] = []
     heapq.heappush(open_f, (0.0, start))
     g_f: Dict[Coord, float] = {start: 0.0}
@@ -171,7 +120,7 @@ def bidirectional_astar_16dir(
     closed_f: set[Coord] = set()
     in_open_f: set[Coord] = {start}
 
-    # Backward search (goal -> start)
+    # backward search
     open_b: List[Tuple[float, Coord]] = []
     heapq.heappush(open_b, (0.0, goal))
     g_b: Dict[Coord, float] = {goal: 0.0}
@@ -182,7 +131,6 @@ def bidirectional_astar_16dir(
     meeting: Optional[Coord] = None
 
     while open_f and open_b:
-        # --- Expand one step forward ---
         if open_f:
             _, current_f = heapq.heappop(open_f)
             if current_f in closed_f:
@@ -195,7 +143,7 @@ def bidirectional_astar_16dir(
                     meeting = current_f
                     break
 
-                for nb in neighbors_16dir(current_f, grid):
+                for nb in neighbors(current_f, grid):
                     cr, cc = current_f
                     nr, nc = nb
                     step_cost = euclidean((cr, cc), (nr, nc))
@@ -208,7 +156,6 @@ def bidirectional_astar_16dir(
                         heapq.heappush(open_f, (f, nb))
                         in_open_f.add(nb)
 
-        # --- Expand one step backward ---
         if open_b:
             _, current_b = heapq.heappop(open_b)
             if current_b in closed_b:
@@ -221,7 +168,7 @@ def bidirectional_astar_16dir(
                     meeting = current_b
                     break
 
-                for nb in neighbors_16dir(current_b, grid):
+                for nb in neighbors(current_b, grid):
                     cr, cc = current_b
                     nr, nc = nb
                     step_cost = euclidean((cr, cc), (nr, nc))
@@ -235,76 +182,11 @@ def bidirectional_astar_16dir(
                         in_open_b.add(nb)
 
     if meeting is None:
-        print("No path found.")
         return None
 
-    # Reconstruct full path start -> meeting -> goal
-    path_f = reconstruct_path(came_from_f, meeting)        # start -> meeting
-    path_b = reconstruct_path(came_from_b, meeting)        # goal -> meeting
-    # path_b is [goal ... meeting]; we want meeting->goal but without repeating meeting
+    path_f = reconstruct_path(came_from_f, meeting)
+    path_b = reconstruct_path(came_from_b, meeting)
     tail = list(reversed(path_b[:-1]))
     full_path = path_f + tail
-
-    # Remove redundant waypoints
-    pruned = prune_path(full_path, grid)
-    return pruned
-
-
-# ---------- Visualization ----------
-
-def visualize_grid_and_path(
-    grid: List[List[int]],
-    path: Optional[List[Coord]] = None,
-    start: Optional[Coord] = None,
-    goal: Optional[Coord] = None,
-    title: str = "Bidirectional 16-dir A* with Dynamic Weighting"
-):
-    grid_np = np.array(grid)
-
-    plt.figure(figsize=(6, 6))
-    plt.imshow(grid_np, cmap="Greys", origin="upper")
-
-    if path:
-        ys = [r for (r, c) in path]
-        xs = [c for (r, c) in path]
-        plt.plot(xs, ys, linewidth=2, marker="o", markersize=4)
-
-    if start:
-        plt.scatter(start[1], start[0], marker="s", s=120,
-                    edgecolors="green", facecolors="none", linewidths=2, label="Start")
-    if goal:
-        plt.scatter(goal[1], goal[0], marker="X", s=140,
-                    edgecolors="red", facecolors="none", linewidths=2, label="Goal")
-
-    plt.title(title)
-    plt.xlabel("Column")
-    plt.ylabel("Row")
-    plt.gca().invert_yaxis()
-
-    if start or goal:
-        plt.legend(loc="upper right")
-
-    plt.grid(False)
-    plt.tight_layout()
-    plt.show()
-
-
-# ---------- Example usage ----------
-
-if __name__ == "__main__":
-    # 0 = free, 1 = obstacle
-    grid = [
-        [0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 1, 1, 0, 1, 1, 0],
-        [0, 0, 0, 1, 0, 0, 1, 0],
-        [1, 1, 0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 1, 1, 1, 0, 0],
-        [0, 1, 0, 0, 0, 0, 0, 0],
-    ]
-
-    start = (0, 0)
-    goal = (5, 7)
-
-    path = bidirectional_astar_16dir(grid, start, goal)
-    print("Pruned path:", path)
-    visualize_grid_and_path(grid, path, start, goal)
+    no_redundant = delete_redundant_waypoints(full_path, grid)
+    return no_redundant
