@@ -1,1 +1,1 @@
-hello!
+Reproduction of optimized 16-directional A* approach outlined in https://pmc.ncbi.nlm.nih.gov/articles/PMC11888910/. Core A* methods can be found in the .py files, while visualization and metrics are consolidated in the Jupyter notebook, which can be run using any Python interpreter containing the necessary libraries. 
